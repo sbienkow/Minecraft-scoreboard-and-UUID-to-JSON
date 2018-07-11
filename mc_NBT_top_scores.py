@@ -5,15 +5,16 @@ Written by Prof_Bloodstone (aka B1o0dy) for use at Near Vanilla server.
 from __future__ import division
 
 import argparse
-import shutil
-import tempfile
-import os
 import json
-import time
+import os
+import re
+import shutil
 import sys
+import tempfile
+import time
+import traceback
+from collections import namedtuple, defaultdict, ChainMap
 from contextlib import contextmanager
-from collections import namedtuple, defaultdict
-from math import log
 
 from nbt import nbt
 
@@ -23,6 +24,7 @@ if sys.version_info < (3, 5):
     except ImportError:
         DirEntry = namedtuple('DirEntry', ('path', 'is_file'))
 
+
         def scandir(directory):
             paths = (os.path.join(directory, filename) for filename in os.listdir(directory))
             return (DirEntry(path, lambda: os.path.isfile(path)) for path in paths)
@@ -30,85 +32,60 @@ else:
     from os import scandir
 
 PLAYER_SCORE = namedtuple('PLAYER_SCORE', ['name', 'score'])
-
-
-def ticks_to_time(ticks):
-    sec = ticks // 20
-    minutes = (sec // 60) % 60
-    hours = sec // 3600
-    return '{} hours {} minute{}'.format(hours, minutes, 's' if minutes != 1 else '')
+COMBINE_OBJ = namedtuple('COMBINE_OBJ', 'regex, new_name')
 
 
 def extract_scores(nbtfile):
     """Extract scores from nbt file and convert to python format that is easier to work with."""
-    objectives = {str(tag['Name']): {}
+    objectives = {str(tag['Name']): list()
                   for tag in nbtfile['data']['Objectives'].tags}
     player_scores = nbtfile['data']['PlayerScores']
 
     for score in player_scores:
-        player_name = str(score['Name'])
-        objective = str(score['Objective'])
-        objectives[objective][player_name] = int(str(score['Score']))
+        player_name = score['Name'].value
+        objective = score['Objective'].value
+        value = score['Score'].value
+        objectives[objective].append(PLAYER_SCORE(player_name, value))
 
     return objectives
 
 
-def parse_scores(nbtfile, number):
-    objectives = extract_scores(nbtfile)
-
-    scoreboard = {}
-    blocks_traveled = defaultdict(int)
-
+def combine_scores(objectives, to_combine, delete_combined=False):
+    combined_objectives = defaultdict(lambda: defaultdict(int))
     for key, obj in objectives.items():
-        if key.startswith('Time'):
-            l = sorted([
-                PLAYER_SCORE(name, score)
-                for name, score
-                in obj.items()
-            ],
-                key=lambda x: x.score,
-                reverse=True)
-            # not used anymore and contains a bug. fix it before uncommenting
-            # # # # # scoreboard['total_playtime'] = (('{} hours'.format(sum(x.score for x in l) // (20 * 60 * 60)),),)
-            l = [PLAYER_SCORE(name, ticks_to_time(score))
-                 for name, score in l]
+        new_name = next((name for regex, name in to_combine if regex.search(key) is not None), None)
+        if new_name is not None:
+            for player in obj:
+                combined_objectives[new_name][player.name] += player.score
+        if delete_combined:
+            del objectives[key]
 
-        elif key.startswith('Distance_'):
-            for name, score in obj.items():
-                blocks_traveled[name] += score
-            continue
+    return {obj_name: [PLAYER_SCORE(player_name, score) for player_name, score in obj.items()]
+            for obj_name, obj in combined_objectives.items()}
 
-        else:
-            l = sorted([
-                PLAYER_SCORE(name, score)
-                for name, score
-                in obj.items()
-            ],
-                key=lambda x: x.score,
-                reverse=True)
 
-        scoreboard[key] = [{'playerName': name, 'score': score}
-                           for name, score
-                           in l[: None if number <= 0 else number]]
+def sort_scores(objectives, descending, reverse):
+    for key, obj in objectives.items():
+        sort_descending = descending if key not in reverse else not descending
+        obj.sort(key=lambda x: (-x.score if sort_descending else x.score, x.name))
 
-    # convert `blocks_traveled from dict to sorted list
-    blocks_traveled = sorted([PLAYER_SCORE(name, score)
-                              for name, score in blocks_traveled.items()],
-                             key=lambda x: x.score,
-                             reverse=True)
-    # format it so it has G blocks, M blocks and K blocks
-    prefixes = ['', 'K', 'M', 'G', 'T', 'times Nathan cheated']
-    blocks_traveled = [{
-        'playerName': name,
-        'score': '{:5.1f}{:1} blocks'.format(
-            score / 10 ** (2 + 3 * int(log(score / 100, 1000))),
-            prefixes[int(log(score / 100, 1000))]
-        )
-    }
-        for name, score in blocks_traveled]
-    scoreboard['blocks_traveled'] = blocks_traveled[: None if number <= 0 else number]
 
-    return scoreboard
+def get_scores(from_file, combine, sort, reverse, number):
+    with create_temp(from_file) as file:
+        objectives = extract_scores(file)
+
+    combined_scores = combine_scores(objectives, combine)
+    scores = dict(ChainMap(combined_scores, objectives))
+    sort_scores(scores, sort, reverse)
+
+    if number > 0:
+        for key, obj in scores.items():
+            scores[key] = obj[:number]
+
+    for key, obj in scores.items():
+        scores[key] = [{'index': index, 'playerName': entry.name, 'score': entry.score}
+                       for index, entry in enumerate(obj, start=1)]
+    return scores
 
 
 def rchop(thestring, ending):
@@ -118,7 +95,7 @@ def rchop(thestring, ending):
     raise IOError('Invalid file found: "{}"'.format(thestring))
 
 
-def parse_UUID(playerdata_folder):
+def get_UUID_with_names(playerdata_folder):
     UUID_name_pairs = []
     for file in (entry.path for entry in scandir(playerdata_folder) if entry.is_file()):
         basename = os.path.basename(file)
@@ -136,16 +113,22 @@ def get_time_as_str():
     return hour + minute
 
 
-def parse(to_file, playerdata_folder, from_file, number):
-    with create_temp(from_file) as file:
-        scoreboard = parse_scores(file, number)
-    UUID_name_pairs = parse_UUID(playerdata_folder)
-    time_as_str = get_time_as_str()
-    output = {
-        'scores': scoreboard,
-        'UUID': UUID_name_pairs,
-        'time': time_as_str,
-    }
+def extract_and_save_data(args):
+    from_file = args['input']
+    to_file = args['output']
+    playerdata_folder = args['playerdata']
+    number = args['number']
+    combine = args['combine']
+    reverse = args['reverse']
+    sort = args['sort']
+
+    output = {'timestamp': get_time_as_str()}
+
+    output['scores'] = get_scores(from_file, combine, sort, reverse, number)
+
+    if playerdata_folder is not None:
+        output['UUID'] = get_UUID_with_names(playerdata_folder)
+
     with open(to_file, 'w') as f:
         json.dump(output, f)
 
@@ -157,43 +140,106 @@ def create_temp(file):
     basename = os.path.basename(file)
     temp_path = os.path.join(temp_dir, '{}.copy'.format(basename))
     shutil.copyfile(file, temp_path)
-    yield nbt.NBTFile(temp_path, 'rb')
-    os.remove(temp_path)
+    try:
+        yield nbt.NBTFile(temp_path, 'rb')
+    finally:
+        os.remove(temp_path)
 
 
 def parser():
-    """Take care of parsing arguments from CLI."""
-    arg_parser = argparse.ArgumentParser(description=__doc__)
-    arg_parser.add_argument('--n', type=int, default=0,
-                            help='Number of scores to save')
-    arg_parser.add_argument('--f', type=str, default='scoreboard.dat',
-                            help='Name of the file to read scores from')
-    arg_parser.add_argument('--t', type=str, default='top_scores.txt',
-                            help='Name of the file to save scores to')
-    arg_parser.add_argument('--p', type=str, default='playerdata',
-                            help='Directory inside of which player data is stored')
-    return arg_parser.parse_args()
+    """Take care of parsing arguments from CLI and config file, if provided."""
+
+    defaults = {
+        'number': 0,
+        'input': 'scoreboard.dat',
+        'output': 'top_scores.txt',
+        'sort': True,
+        'reverse': [],
+        'combine': [],
+    }
+
+    arg_parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+
+    arg_parser.add_argument('-n', '--number', type=int,
+                            help='Number of scores to save.\n'
+                                 'If <= 0, all scores will be saved'
+                                 ' [DEFAULT {}]'.format(defaults['number']))
+
+    arg_parser.add_argument('-i', '--input', '--scoreboard', dest='input_file', type=str,
+                            help='Name of the file to read scores from [DEFAULT {}]'.format(defaults['input']))
+
+    arg_parser.add_argument('-t', '--output', '--top', dest='output_file', type=str,
+                            help='Name of the file to save scores to [DEFAULT {}]'.format(defaults['output']))
+
+    arg_parser.add_argument('-p', '--playerdata', type=str,
+                            help='Directory inside of which player data is stored, used to extract UUID and names.\n'
+                                 'Need to be running Spigot/Bukkit for it to work!')
+
+    arg_parser.add_argument('-a', '--ascending', action='store_false',
+                            help='Flag indicating that scoreboard should be sorted in ascending order by default')
+
+    arg_parser.add_argument('-d', '--descending', action='store_true',
+                            help='Flag indicating that scoreboard should be sorted in descending order by default [DEFAULT]')
+
+    arg_parser.set_defaults(ascending=None, descending=None)
+
+    arg_parser.add_argument('-r', '--reverse', action='append',
+                            help='List of all objective names which should be sorted in the opposite direction to the'
+                                 ' direction chosen by "ascending" / "descending" arguments.\n'
+                                 'Has to be repeated for every item added!\n'
+                                 'Example: "-r obj1 -r obj2 -r obj3"')
+
+    arg_parser.add_argument('--combine', action='append',
+                            help='List of all objective names which should be combined into one.\n'
+                                 'Have a form of regular expression and new name separated by an escaped space "regex\\ name"\n'
+                                 'Has to be repeated for every item added!\n'
+                                 'Example: "--combine distance\ total_traveled" will combine every scoreboard with name "distance" in them and save it into "total_traveled"')
+
+    arg_parser.add_argument('-c', '--config', dest='config_file', type=str,
+                            help='File containing configuration. CLI arguments override it!')
+
+    cli_args = arg_parser.parse_args()
+
+    if None not in (cli_args.ascending, cli_args.descending):
+        raise argparse.ArgumentError('Can\'t provide both "ascending" and "descending" arguments!')
+
+    cli_args.sort = next(item for item in (cli_args.ascending, cli_args.descending, defaults['sort'])
+                         if item is not None)
+
+    config_args = {}
+
+    if cli_args.config_file is not None:
+        with open(cli_args.config_file, 'r') as f:
+            config_args = json.load(f)
+            if config_args.get('combine') is not None:
+                config_args['combine'] = [COMBINE_OBJ(re.compile(regex), name) for regex, name in
+                                          config_args['combine']]
+
+        del cli_args.config_file
+
+    if cli_args.combine is not None:
+        cli_args.combine = [COMBINE_OBJ(re.compile(regex), name) for regex, name in
+                            (s.split(maxsplit=1) for s in cli_args.combine)]
+
+    cli_args_dict = {key: value for key, value in vars(cli_args).items() if value is not None}
+
+    # TODO translate config names to accept the same as CLI
+
+    return ChainMap(cli_args_dict, config_args, defaults, defaultdict(lambda: None))
 
 
 def main():
     args = parser()
-    tries = 5
+
+    tries = 1
     while tries > 0:
         try:
-            parse(
-                to_file=args.t,
-                playerdata_folder=args.p,
-                from_file=args.f,
-                number=args.n
-            )
+            extract_and_save_data(args)
         except Exception as e:
-            print("Exception {}[{}] occured. Trying again {} more time{}.".format(type(e).__name__,
-                                                                                  e,
-                                                                                  tries,
-                                                                                  's' if tries != 1 else ''),
-                  file=sys.stderr)
-
             tries -= 1
+            print("Exception {} occured. Trying again {} more time{}.\n{}"
+                  .format(type(e).__name__, tries, 's' if tries != 1 else '', traceback.format_exc()),
+                  file=sys.stderr)
         else:
             tries = 0
 
