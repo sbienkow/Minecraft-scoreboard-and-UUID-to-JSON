@@ -37,7 +37,7 @@ COMBINE_OBJ = namedtuple('COMBINE_OBJ', 'regex, new_name')
 
 def extract_scores(nbtfile):
     """Extract scores from nbt file and convert to python format that is easier to work with."""
-    objectives = {str(tag['Name']): list()
+    objectives = {tag['Name'].value: {'DisplayName': tag['DisplayName'].value, 'scores': []}
                   for tag in nbtfile['data']['Objectives'].tags}
     player_scores = nbtfile['data']['PlayerScores']
 
@@ -45,7 +45,7 @@ def extract_scores(nbtfile):
         player_name = score['Name'].value
         objective = score['Objective'].value
         value = score['Score'].value
-        objectives[objective].append(PLAYER_SCORE(player_name, value))
+        objectives[objective]['scores'].append(PLAYER_SCORE(player_name, value))
 
     return objectives
 
@@ -55,19 +55,21 @@ def combine_scores(objectives, to_combine, delete_combined=False):
     for key, obj in objectives.items():
         new_name = next((name for regex, name in to_combine if regex.search(key) is not None), None)
         if new_name is not None:
-            for player in obj:
+            for player in obj['scores']:
                 combined_objectives[new_name][player.name] += player.score
         if delete_combined:
             del objectives[key]
 
-    return {obj_name: [PLAYER_SCORE(player_name, score) for player_name, score in obj.items()]
+    return {obj_name: {'DisplayName': obj_name,
+                       'scores': [PLAYER_SCORE(player_name, score)
+                                  for player_name, score in obj.items()]}
             for obj_name, obj in combined_objectives.items()}
 
 
 def sort_scores(objectives, descending, reverse):
     for key, obj in objectives.items():
         sort_descending = descending if key not in reverse else not descending
-        obj.sort(key=lambda x: (-x.score if sort_descending else x.score, x.name))
+        obj['scores'].sort(key=lambda x: (-x.score if sort_descending else x.score, x.name))
 
 
 def get_scores(from_file, combine, sort, reverse, number):
@@ -80,11 +82,11 @@ def get_scores(from_file, combine, sort, reverse, number):
 
     if number > 0:
         for key, obj in scores.items():
-            scores[key] = obj[:number]
+            scores[key]['scores'] = obj['scores'][:number]
 
     for key, obj in scores.items():
-        scores[key] = [{'index': index, 'playerName': entry.name, 'score': entry.score}
-                       for index, entry in enumerate(obj, start=1)]
+        scores[key]['scores'] = [{'index': index, 'playerName': entry.name, 'score': entry.score}
+                                 for index, entry in enumerate(obj['scores'], start=1)]
     return scores
 
 
@@ -231,7 +233,7 @@ def parser():
 def main():
     args = parser()
 
-    tries = 1
+    tries = 3
     while tries > 0:
         try:
             extract_and_save_data(args)
