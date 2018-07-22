@@ -15,6 +15,7 @@ import time
 import traceback
 from collections import namedtuple, defaultdict, ChainMap
 from contextlib import contextmanager
+from math import log
 
 from nbt import nbt
 
@@ -33,6 +34,20 @@ else:
 
 PLAYER_SCORE = namedtuple('PLAYER_SCORE', ['name', 'score'])
 COMBINE_OBJ = namedtuple('COMBINE_OBJ', 'regex, new_name')
+
+
+def ticks_to_time(ticks):
+    sec = ticks // 20
+    minutes = (sec // 60) % 60
+    hours = sec // 3600
+    return '{} hours {} minute{}'.format(hours, minutes, 's' if minutes != 1 else '')
+
+
+def blocks_to_distance(blocks):
+    prefixes = ['', 'K', 'M', 'G', 'T', 'times Nathan cheated']
+    dist = blocks / 10 ** (2 + 3 * int(log(blocks / 100, 1000)))
+    prefix = prefixes[int(log(blocks / 100, 1000))]
+    return '{:5.1f}{:1} blocks'.format(dist, prefix)
 
 
 def extract_scores(nbtfile):
@@ -91,6 +106,12 @@ def get_scores(from_file, combine, sort, reverse, number, blacklist, delete_comb
     for key, obj in scores.items():
         scores[key]['scores'] = [{'index': index, 'playerName': entry.name, 'score': entry.score}
                                  for index, entry in enumerate(obj['scores'], start=1)]
+
+    for score in scores.get('Playtime', {}).get('scores', []):
+        score['score'] = ticks_to_time(score['score'])
+
+    for score in scores.get('Blocks traveled', {}).get('scores', []):
+        score['score'] = blocks_to_distance(score['score'])
 
     return {key: value for key, value in scores.items() if key not in blacklist}
 
