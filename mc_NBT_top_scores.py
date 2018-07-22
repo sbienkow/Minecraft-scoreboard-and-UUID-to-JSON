@@ -108,13 +108,6 @@ def get_UUID_with_names(playerdata_folder):
     return UUID_name_pairs
 
 
-def get_time_as_str():
-    UTC_now = time.gmtime()
-    hour = str(UTC_now.tm_hour).zfill(2)
-    minute = str(UTC_now.tm_min).zfill(2)
-    return hour + minute
-
-
 def extract_and_save_data(args):
     from_file = args['input']
     to_file = args['output']
@@ -124,9 +117,8 @@ def extract_and_save_data(args):
     reverse = args['reverse']
     sort = args['sort']
 
-    output = {'timestamp': get_time_as_str()}
-
-    output['scores'] = get_scores(from_file, combine, sort, reverse, number)
+    output = {'timestamp': time.time(),
+              'scores': get_scores(from_file, combine, sort, reverse, number)}
 
     if playerdata_folder is not None:
         output['UUID'] = get_UUID_with_names(playerdata_folder)
