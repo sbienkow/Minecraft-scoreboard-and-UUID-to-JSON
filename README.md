@@ -6,6 +6,7 @@ Extract scoreboard (and UUID with names) to JSON.
 usage: mc_NBT_top_scores.py [-h] [-n NUMBER] [-i INPUT_FILE] [-t OUTPUT_FILE]
                             [-p PLAYERDATA] [-a] [-d] [-r REVERSE]
                             [--combine COMBINE] [-c CONFIG_FILE]
+                            [-b BLACKLIST] [--delete-combined]
 
 Extracts top player scores from files written in NBT format.
 Written by Prof_Bloodstone (aka B1o0dy) for use at Near Vanilla server.
@@ -29,9 +30,15 @@ optional arguments:
                         Has to be repeated for every item added!
                         Example: "-r obj1 -r obj2 -r obj3"
   --combine COMBINE     List of all objective names which should be combined into one.
-                        Have a form of regular expression and new name separated by an escaped space "regex\ name"
+                        Have a form of regular expression and new name separated by a space "regex name"
                         Has to be repeated for every item added!
                         Example: "--combine distance\ total_traveled" will combine every scoreboard with name "distance" in them and save it into "total_traveled"
   -c CONFIG_FILE, --config CONFIG_FILE
                         File containing configuration. CLI arguments override it!
+  -b BLACKLIST, --blacklist BLACKLIST
+                        List of all objective names which shouldn't be in the output file
+                        Has to be repeated for every item added!
+                        Example: "-b obj1 -b obj2 -b obj3"
+  --delete-combined     Flag indicating that source scoreboards used for combining should be deleted
+                        By default they don't get deleted
 ```

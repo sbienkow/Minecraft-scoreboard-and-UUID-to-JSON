@@ -72,11 +72,11 @@ def sort_scores(objectives, descending, reverse):
         obj['scores'].sort(key=lambda x: (-x.score if sort_descending else x.score, x.name))
 
 
-def get_scores(from_file, combine, sort, reverse, number):
+def get_scores(from_file, combine, sort, reverse, number, blacklist, delete_combined):
     with create_temp(from_file) as file:
         objectives = extract_scores(file)
 
-    combined_scores = combine_scores(objectives, combine)
+    combined_scores = combine_scores(objectives, combine, delete_combined)
     scores = dict(ChainMap(combined_scores, objectives))
     sort_scores(scores, sort, reverse)
 
@@ -87,7 +87,8 @@ def get_scores(from_file, combine, sort, reverse, number):
     for key, obj in scores.items():
         scores[key]['scores'] = [{'index': index, 'playerName': entry.name, 'score': entry.score}
                                  for index, entry in enumerate(obj['scores'], start=1)]
-    return scores
+
+    return {key: value for key, value in scores.items() if key not in blacklist}
 
 
 def rchop(thestring, ending):
@@ -116,9 +117,11 @@ def extract_and_save_data(args):
     combine = args['combine']
     reverse = args['reverse']
     sort = args['sort']
+    blacklist = args['blacklist']
+    delete_combined = args['delete-combined']
 
     output = {'timestamp': time.time(),
-              'scores': get_scores(from_file, combine, sort, reverse, number)}
+              'scores': get_scores(from_file, combine, sort, reverse, number, blacklist, delete_combined)}
 
     if playerdata_folder is not None:
         output['UUID'] = get_UUID_with_names(playerdata_folder)
@@ -185,12 +188,21 @@ def parser():
 
     arg_parser.add_argument('--combine', action='append',
                             help='List of all objective names which should be combined into one.\n'
-                                 'Have a form of regular expression and new name separated by an escaped space "regex\\ name"\n'
+                                 'Have a form of regular expression and new name separated by a space "regex name"\n'
                                  'Has to be repeated for every item added!\n'
                                  'Example: "--combine distance\ total_traveled" will combine every scoreboard with name "distance" in them and save it into "total_traveled"')
 
     arg_parser.add_argument('-c', '--config', dest='config_file', type=str,
                             help='File containing configuration. CLI arguments override it!')
+
+    arg_parser.add_argument('-b', '--blacklist', action='append',
+                            help='List of all objective names which shouldn\'t be in the output file\n'
+                                 'Has to be repeated for every item added!\n'
+                                 'Example: "-b obj1 -b obj2 -b obj3"')
+
+    arg_parser.add_argument('--delete-combined', action='store_true',
+                            help='Flag indicating that source scoreboards used for combining should be deleted\n'
+                                 'By default they don\'t get deleted')
 
     cli_args = arg_parser.parse_args()
 
