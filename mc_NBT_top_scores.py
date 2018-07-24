@@ -110,15 +110,15 @@ def get_UUID_with_names(playerdata_folder):
 
 
 def extract_and_save_data(args):
-    from_file = args['input']
-    to_file = args['output']
+    from_file = args['input_file']
+    to_file = args['output_file']
     playerdata_folder = args['playerdata']
     number = args['number']
     combine = args['combine']
     reverse = args['reverse']
-    sort = args['sort']
+    sort = args['sort_descending']
     blacklist = args['blacklist']
-    delete_combined = args['delete-combined']
+    delete_combined = args['delete_combined']
 
     output = {'timestamp': time.time(),
               'scores': get_scores(from_file, combine, sort, reverse, number, blacklist, delete_combined)}
@@ -148,11 +148,13 @@ def parser():
 
     defaults = {
         'number': 0,
-        'input': 'scoreboard.dat',
-        'output': 'top_scores.txt',
-        'sort': True,
+        'input_file': 'scoreboard.dat',
+        'output_file': 'top_scores.txt',
+        'sort_descending': True,
         'reverse': [],
         'combine': [],
+        'blacklist': [],
+        'delete_combined': False
     }
 
     arg_parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
@@ -163,10 +165,10 @@ def parser():
                                  ' [DEFAULT {}]'.format(defaults['number']))
 
     arg_parser.add_argument('-i', '--input', '--scoreboard', dest='input_file', type=str,
-                            help='Name of the file to read scores from [DEFAULT {}]'.format(defaults['input']))
+                            help='Name of the file to read scores from [DEFAULT {}]'.format(defaults['input_file']))
 
     arg_parser.add_argument('-t', '--output', '--top', dest='output_file', type=str,
-                            help='Name of the file to save scores to [DEFAULT {}]'.format(defaults['output']))
+                            help='Name of the file to save scores to [DEFAULT {}]'.format(defaults['output_file']))
 
     arg_parser.add_argument('-p', '--playerdata', type=str,
                             help='Directory inside of which player data is stored, used to extract UUID and names.\n'
@@ -200,7 +202,7 @@ def parser():
                                  'Has to be repeated for every item added!\n'
                                  'Example: "-b obj1 -b obj2 -b obj3"')
 
-    arg_parser.add_argument('--delete-combined', action='store_true',
+    arg_parser.add_argument('--delete_combined', action='store_true',
                             help='Flag indicating that source scoreboards used for combining should be deleted\n'
                                  'By default they don\'t get deleted')
 
@@ -209,8 +211,9 @@ def parser():
     if None not in (cli_args.ascending, cli_args.descending):
         raise argparse.ArgumentError('Can\'t provide both "ascending" and "descending" arguments!')
 
-    cli_args.sort = next(item for item in (cli_args.ascending, cli_args.descending, defaults['sort'])
-                         if item is not None)
+    cli_args.sort_descending = next(item for item in
+                                    (cli_args.ascending, cli_args.descending, defaults['sort_descending'])
+                                    if item is not None)
 
     config_args = {}
 
@@ -218,8 +221,8 @@ def parser():
         with open(cli_args.config_file, 'r') as f:
             config_args = json.load(f)
             if config_args.get('combine') is not None:
-                config_args['combine'] = [COMBINE_OBJ(re.compile(regex), name) for regex, name in
-                                          config_args['combine']]
+                config_args['combine'] = [COMBINE_OBJ(re.compile(item['regex']), item['new_name'])
+                                          for item in config_args['combine']]
 
         del cli_args.config_file
 
