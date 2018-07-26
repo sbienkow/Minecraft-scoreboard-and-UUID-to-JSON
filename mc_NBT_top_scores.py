@@ -53,12 +53,15 @@ def extract_scores(nbtfile):
 
 def combine_scores(objectives, to_combine, delete_combined=False):
     combined_objectives = defaultdict(lambda: defaultdict(int))
+    to_delete = []
     for key, obj in objectives.items():
         new_name = next((name for regex, name in to_combine if regex.search(key) is not None), None)
         if new_name is not None:
+            to_delete.append(key)
             for player in obj['scores']:
                 combined_objectives[new_name][player.name] += player.score
-        if delete_combined:
+    if delete_combined:
+        for key in to_delete:
             del objectives[key]
 
     return {obj_name: {'DisplayName': obj_name,
@@ -203,7 +206,7 @@ def parser():
                                  'Has to be repeated for every item added!\n'
                                  'Example: "-b obj1 -b obj2 -b obj3"')
 
-    arg_parser.add_argument('--delete_combined', action='store_true',
+    arg_parser.add_argument('--delete_combined', action='store_true', default=None,
                             help='Flag indicating that source scoreboards used for combining should be deleted\n'
                                  'By default they don\'t get deleted')
 
