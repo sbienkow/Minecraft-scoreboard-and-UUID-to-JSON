@@ -37,8 +37,9 @@ COMBINE_OBJ = namedtuple('COMBINE_OBJ', 'regex, new_name')
 
 def extract_scores(nbtfile):
     """Extract scores from nbt file and convert to python format that is easier to work with."""
-    objectives = {tag['Name'].value: {'DisplayName': tag['DisplayName'].value, 'scores': []}
+    objectives = {tag['Name'].value: {'DisplayName': json.loads(tag['DisplayName'].value)['text'], 'scores': []}
                   for tag in nbtfile['data']['Objectives'].tags}
+
     player_scores = nbtfile['data']['PlayerScores']
 
     for score in player_scores:
