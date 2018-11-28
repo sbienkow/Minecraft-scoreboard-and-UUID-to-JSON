@@ -76,7 +76,7 @@ def sort_scores(objectives, descending, reverse):
         obj['scores'].sort(key=lambda x: (-x.score if sort_descending else x.score, x.name))
 
 
-def get_scores(from_file, combine, sort, reverse, number, blacklist, delete_combined):
+def get_scores(from_file, combine, sort, reverse, number, whitelist, blacklist, delete_combined):
     with create_temp(from_file) as file:
         objectives = extract_scores(file)
 
@@ -92,7 +92,9 @@ def get_scores(from_file, combine, sort, reverse, number, blacklist, delete_comb
         scores[key]['scores'] = [{'index': index, 'playerName': entry.name, 'score': entry.score}
                                  for index, entry in enumerate(obj['scores'], start=1)]
 
-    return {key: value for key, value in scores.items() if key not in blacklist}
+    return {key: value for key, value in scores.items()
+            if key in combined_scores.keys()
+            or key not in blacklist and (not whitelist or key in whitelist)}
 
 
 def rchop(thestring, ending):
@@ -121,17 +123,18 @@ def extract_and_save_data(args):
     combine = args['combine']
     reverse = args['reverse']
     sort = args['sort_descending']
+    whitelist = args['whitelist']
     blacklist = args['blacklist']
     delete_combined = args['delete_combined']
 
     output = {'timestamp': time.time(),
-              'scores': get_scores(from_file, combine, sort, reverse, number, blacklist, delete_combined)}
+              'scores': get_scores(from_file, combine, sort, reverse, number, whitelist, blacklist, delete_combined)}
 
     if playerdata_folder is not None:
         output['UUID'] = get_UUID_with_names(playerdata_folder)
 
     with open(to_file, 'w') as f:
-        json.dump(output, f)
+        json.dump(output, f, sort_keys=True)
 
 
 @contextmanager
@@ -147,20 +150,7 @@ def create_temp(file):
         os.remove(temp_path)
 
 
-def parser():
-    """Take care of parsing arguments from CLI and config file, if provided."""
-
-    defaults = {
-        'number': 0,
-        'input_file': 'scoreboard.dat',
-        'output_file': 'top_scores.txt',
-        'sort_descending': True,
-        'reverse': [],
-        'combine': [],
-        'blacklist': [],
-        'delete_combined': False
-    }
-
+def _parse_cli(defaults):
     arg_parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
 
     arg_parser.add_argument('-n', '--number', type=int,
@@ -206,11 +196,34 @@ def parser():
                                  'Has to be repeated for every item added!\n'
                                  'Example: "-b obj1 -b obj2 -b obj3"')
 
+    arg_parser.add_argument('-w', '--whitelist', action='append',
+                            help='List of all objective names which should be in the output file\n'
+                                 'Has to be repeated for every item added!\n'
+                                 'Example: "-w obj1 -w obj2 -w obj3"')
+
     arg_parser.add_argument('--delete_combined', action='store_true', default=None,
                             help='Flag indicating that source scoreboards used for combining should be deleted\n'
                                  'By default they don\'t get deleted')
 
-    cli_args = arg_parser.parse_args()
+    return arg_parser.parse_args()
+
+
+def parser():
+    """Take care of parsing arguments from CLI and config file, if provided."""
+
+    defaults = {
+        'number': 0,
+        'input_file': 'scoreboard.dat',
+        'output_file': 'top_scores.json',
+        'sort_descending': True,
+        'reverse': [],
+        'combine': [],
+        'blacklist': [],
+        'whitelist': [],
+        'delete_combined': False
+    }
+
+    cli_args = _parse_cli(defaults)
 
     if None not in (cli_args.ascending, cli_args.descending):
         raise argparse.ArgumentError('Can\'t provide both "ascending" and "descending" arguments!')
@@ -222,11 +235,15 @@ def parser():
     config_args = {}
 
     if cli_args.config_file is not None:
-        with open(cli_args.config_file, 'r') as f:
-            config_args = json.load(f)
-            if config_args.get('combine') is not None:
-                config_args['combine'] = [COMBINE_OBJ(re.compile(item['regex']), item['new_name'])
-                                          for item in config_args['combine']]
+        if cli_args.config_file != '-':
+            with open(cli_args.config_file, 'r') as f:
+                config_args = json.load(f)
+        else:
+            config_args = json.load(sys.stdin)
+
+        if config_args.get('combine') is not None:
+            config_args['combine'] = [COMBINE_OBJ(re.compile(item['regex']), item['new_name'])
+                                      for item in config_args['combine']]
 
         del cli_args.config_file
 
@@ -238,7 +255,7 @@ def parser():
 
     # TODO translate config names to accept the same as CLI
 
-    return ChainMap(cli_args_dict, config_args, defaults, defaultdict(lambda: None))
+    return ChainMap({}, cli_args_dict, config_args, defaults, defaultdict(lambda: None))
 
 
 def main():
@@ -251,7 +268,10 @@ def main():
         except Exception as e:
             tries -= 1
             print("Exception {} occured. Trying again {} more time{}.\n{}"
-                  .format(type(e).__name__, tries, 's' if tries != 1 else '', traceback.format_exc()),
+                  .format(type(e).__name__,
+                          tries,
+                          's' if tries != 1 else '',
+                          traceback.format_exc()),
                   file=sys.stderr)
         else:
             tries = 0

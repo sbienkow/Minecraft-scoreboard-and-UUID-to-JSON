@@ -1,7 +1,8 @@
 {
   "number": 0,
   "input_file": "scoreboard.dat",
-  "output_file": "top_scores.txt",
+  "output_file": "top_scores.json",
+  "playerdata": "playerdata",
   "sort_descending": true,
   "reverse": ["score1", "score2", "score3"],
   "combine": [
