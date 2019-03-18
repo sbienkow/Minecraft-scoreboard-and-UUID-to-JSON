@@ -15,6 +15,8 @@ import time
 import traceback
 from collections import namedtuple, defaultdict, ChainMap
 from contextlib import contextmanager
+from copy import deepcopy
+from math import log
 
 from nbt import nbt
 
@@ -30,6 +32,8 @@ if sys.version_info < (3, 5):
             return (DirEntry(path, lambda: os.path.isfile(path)) for path in paths)
 else:
     from os import scandir
+
+epsilon = sys.float_info.epsilon
 
 PLAYER_SCORE = namedtuple('PLAYER_SCORE', ['name', 'score'])
 COMBINE_OBJ = namedtuple('COMBINE_OBJ', 'regex, new_name')
@@ -97,6 +101,111 @@ def get_scores(from_file, combine, sort, reverse, number, whitelist, blacklist, 
             or key not in blacklist and (not whitelist or key in whitelist)}
 
 
+def convert_scores(scores, convert):
+    convert_dict = {
+        "blocks": _convert_blocks,
+        "si": _convert_si,
+        "minutes": _convert_minutes,
+        "seconds": _convert_seconds,
+        "hours": _convert_hours,
+        "hm": _convert_hm,
+        "ms": _convert_ms,
+        "hms": _convert_hms,
+    }
+
+    unit_dict = defaultdict(lambda: lambda x: x,
+                            {
+                                "t": lambda x: x,
+                                "cm": lambda x: x,
+                                "m": lambda x: x * 60 * 20,
+                            }
+                            )
+
+    invalid_converts = {converter for converter in convert.keys()
+                        if (converter.split('_', maxsplit=1)[1] if '_' in converter else converter) not in convert_dict.keys()}
+    if invalid_converts:
+        print("Following converters used are invalid:\n"
+              "\t{}\n"
+              "Available converters:\n"
+              "\t{}"
+              .format(', '.join(invalid_converts),
+                      ', '.join(convert_dict.keys())),
+              file=sys.stderr)
+
+    for ic in invalid_converts:
+        del convert[ic]
+
+    converted_scores = {}
+
+    for converter, to_convert in convert.items():
+        unit, conv_name = converter.split('_', maxsplit=1) if '_' in converter else (None, converter)
+
+        if unit is None:
+            print('[{}] Unit type not given. Assuming default!'.format(converter), file=sys.stderr)
+        elif unit not in unit_dict:
+            print('[{}] Invalid unit type "{}"! Using default!'.format(converter, unit), file=sys.stderr)
+
+        conv = convert_dict[conv_name]
+        for score_name in to_convert:
+            converted_scores[score_name] = deepcopy(scores[score_name])
+            for entry in converted_scores[score_name]['scores']:
+                entry['score'] = conv(entry['score'])
+
+    return dict(converted_scores)
+
+
+def _convert_si(value):
+    prefixes = ('', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y', 'OUT OF SI PREFIXES!')
+    new_value = value / 10 ** (3 * int(log(value + epsilon, 1000)))
+    prefix = prefixes[int(log(value + epsilon, 1000))]
+    return '{:5.1f}{:1}'.format(new_value, prefix)
+
+
+def _convert_blocks(cm):
+    return '{} blocks'.format(_convert_si(cm/100))
+
+
+def _convert_minutes(ticks):
+    sec = ticks // 20
+    minutes = sec // 60
+    return '{} minute{}'.format(minutes, 's' if minutes != 1 else '')
+
+
+def _convert_seconds(ticks):
+    sec = ticks // 20
+    return '{} second{}'.format(sec, 's' if sec != 1 else '')
+
+
+def _convert_hours(ticks):
+    sec = ticks // 20
+    hours = sec // 3600
+    return '{} hour{}'.format(hours, 's' if hours != 1 else '')
+
+
+def _convert_hm(ticks):
+    sec = ticks // 20
+    minutes = (sec // 60) % 60
+    hours = sec // 3600
+    return '{} hour{} {} minute{}'.format(hours, 's' if hours != 1 else '',
+                                          minutes, 's' if minutes != 1 else '')
+
+
+def _convert_ms(ticks):
+    sec = ticks // 20
+    minutes = sec // 60
+    return '{} minute{} {} second{}'.format(minutes, 's' if minutes != 1 else '',
+                                            sec, 's' if sec != 1 else '')
+
+
+def _convert_hms(ticks):
+    sec = ticks // 20
+    minutes = (sec // 60) % 60
+    hours = sec // 3600
+    return '{} hour{} {} minute{} {} second{}'.format(hours, 's' if hours != 1 else '',
+                                                      minutes, 's' if minutes != 1 else '',
+                                                      sec, 's' if sec != 1 else '')
+
+
 def rchop(thestring, ending):
     """Chops the ending from string, if it matches."""
     if thestring.endswith(ending):
@@ -126,9 +235,13 @@ def extract_and_save_data(args):
     whitelist = args['whitelist']
     blacklist = args['blacklist']
     delete_combined = args['delete_combined']
+    convert = args['convert']
+
+    scores = get_scores(from_file, combine, sort, reverse, number, whitelist, blacklist, delete_combined)
+    converted_scores = convert_scores(scores, convert)
 
     output = {'timestamp': time.time(),
-              'scores': get_scores(from_file, combine, sort, reverse, number, whitelist, blacklist, delete_combined)}
+              'scores': dict(ChainMap(converted_scores, scores))}
 
     if playerdata_folder is not None:
         output['UUID'] = get_UUID_with_names(playerdata_folder)
@@ -182,11 +295,17 @@ def _parse_cli(defaults):
                                  'Has to be repeated for every item added!\n'
                                  'Example: "-r obj1 -r obj2 -r obj3"')
 
-    arg_parser.add_argument('--combine', action='append',
+    arg_parser.add_argument('--combine', action='append', nargs=2,
                             help='List of all objective names which should be combined into one.\n'
-                                 'Have a form of regular expression and new name separated by a space "regex name"\n'
+                                 'Have a form of regular expression and new name separated by a space "regex" "name"\n'
                                  'Has to be repeated for every item added!\n'
-                                 'Example: "--combine distance\ total_traveled" will combine every scoreboard with name "distance" in them and save it into "total_traveled"')
+                                 'Example: "--combine distance total_traveled" will combine every scoreboard with name "distance" in them and save it into "total_traveled"')
+
+    arg_parser.add_argument('--convert', action='append', nargs=2,
+                            help='List of all objective names which should be converted\n'
+                                 'Have a form of converted name and score name separated by a space "blocks" "name"\n'
+                                 'Has to be repeated for every item added!\n'
+                                 'Example: "--convert blocks total_traveled" will convert scoreboard with name "total_traveled"')
 
     arg_parser.add_argument('-c', '--config', dest='config_file', type=str,
                             help='File containing configuration. CLI arguments override it!')
@@ -220,7 +339,8 @@ def parser():
         'combine': [],
         'blacklist': [],
         'whitelist': [],
-        'delete_combined': False
+        'convert': {},
+        'delete_combined': False,
     }
 
     cli_args = _parse_cli(defaults)
@@ -231,6 +351,12 @@ def parser():
     cli_args.sort_descending = next(item for item in
                                     (cli_args.ascending, cli_args.descending, defaults['sort_descending'])
                                     if item is not None)
+
+    if cli_args.convert is not None:
+        convert = defaultdict(list)
+        for key, value in cli_args.convert:
+            convert[key].append(value)
+        cli_args.convert = convert
 
     config_args = {}
 
@@ -248,8 +374,7 @@ def parser():
         del cli_args.config_file
 
     if cli_args.combine is not None:
-        cli_args.combine = [COMBINE_OBJ(re.compile(regex), name) for regex, name in
-                            (s.split(maxsplit=1) for s in cli_args.combine)]
+        cli_args.combine = [COMBINE_OBJ(re.compile(regex), name) for regex, name in cli_args.combine]
 
     cli_args_dict = {key: value for key, value in vars(cli_args).items() if value is not None}
 
@@ -267,6 +392,8 @@ def main():
             extract_and_save_data(args)
         except Exception as e:
             tries -= 1
+            if tries <= 0:
+                return 1
             print("Exception {} occured. Trying again {} more time{}.\n{}"
                   .format(type(e).__name__,
                           tries,
@@ -276,6 +403,8 @@ def main():
         else:
             tries = 0
 
+    return 0
+
 
 if __name__ == '__main__':
-    main()
+    exit(main())
